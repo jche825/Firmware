@@ -177,7 +177,8 @@ int LidarLitePWM::measure()
 	_range.type = distance_sensor_s::MAV_DISTANCE_SENSOR_LASER;
 	_range.max_distance = get_maximum_distance();
 	_range.min_distance = get_minimum_distance();
-	_range.current_distance = float(_pwm.pulse_width) * 1e-3f;   /* 10 usec = 1 cm distance for LIDAR-Lite */
+	/* 10 usec = 1 cm distance for LIDAR-Lite, hardcode offset compensation of 26cm */
+	_range.current_distance = float(_pwm.pulse_width) * 1e-3f - 260e-3f;
 	_range.covariance = 0.0f;
 	_range.orientation = _rotation;
 	/* TODO: set proper ID */
