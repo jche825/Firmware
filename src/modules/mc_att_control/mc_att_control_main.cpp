@@ -753,10 +753,10 @@ MulticopterAttitudeControl::run()
 				_actuators.control[1] = (PX4_ISFINITE(_att_control(1))) ? _att_control(1) : 0.0f;
 				_actuators.control[2] = (PX4_ISFINITE(_att_control(2))) ? _att_control(2) : 0.0f;
 				_actuators.control[3] = (PX4_ISFINITE(_thrust_sp)) ? _thrust_sp : 0.0f;
-				/* Feedforward horizontal thrust */
-				_actuators.control[5] = (PX4_ISFINITE(_manual_control_sp.aux1)) ? _manual_control_sp.aux1 : 0.0f;
-				_actuators.control[7] = (PX4_ISFINITE(_manual_control_sp.aux2)) ? _manual_control_sp.aux2 : 0.0f;
-				//_actuators.control[7] = _v_att_sp.landing_gear;
+				/* Manual horizontal thrust - temporary */
+				_actuators.control[4] = (PX4_ISFINITE(_manual_control_sp.aux1)) ? _manual_control_sp.aux1 * 0.1f : 0.0f;
+				_actuators.control[5] = (PX4_ISFINITE(_manual_control_sp.aux2)) ? _manual_control_sp.aux2 * 0.1f : 0.0f;
+				_actuators.control[7] = _v_att_sp.landing_gear;
 				_actuators.timestamp = hrt_absolute_time();
 				_actuators.timestamp_sample = _sensor_gyro.timestamp;
 
