@@ -3238,6 +3238,9 @@ MulticopterPositionControl::task_main()
 				_control_mode.flag_control_velocity_enabled ||
 				_control_mode.flag_control_acceleration_enabled))) {
 
+				/* Horizontal thrust */
+				_att_sp.hor_thrust[0] = _manual.aux1 * 0.1f;
+				_att_sp.hor_thrust[1] = _manual.aux2 * 0.1f;
 				if (_att_sp_pub != nullptr) {
 					orb_publish(_attitude_setpoint_id, _att_sp_pub, &_att_sp);
 

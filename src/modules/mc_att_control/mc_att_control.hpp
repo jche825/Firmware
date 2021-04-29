@@ -174,6 +174,7 @@ private:
 	matrix::Vector3f _rates_sp;			/**< angular rates setpoint */
 	matrix::Vector3f _rates_int;			/**< angular rates integral error */
 	float _thrust_sp;				/**< thrust setpoint */
+	float _hor_thrust_sp[2];        /**< horizontal thrust setpoint */
 	matrix::Vector3f _att_control;			/**< attitude control vector */
 
 	matrix::Dcmf _board_rotation;			/**< rotation matrix for the orientation that the board is mounted */

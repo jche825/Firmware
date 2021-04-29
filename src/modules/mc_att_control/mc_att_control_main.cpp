@@ -114,12 +114,16 @@ MulticopterAttitudeControl::MulticopterAttitudeControl() :
 	/* initialize quaternions in messages to be valid */
 	_v_att.q[0] = 1.f;
 	_v_att_sp.q_d[0] = 1.f;
+	_v_att_sp.hor_thrust[0] = 0.0f;
+	_v_att_sp.hor_thrust[1] = 0.0f;
 
 	_rates_prev.zero();
 	_rates_prev_filtered.zero();
 	_rates_sp.zero();
 	_rates_int.zero();
 	_thrust_sp = 0.0f;
+	_hor_thrust_sp[0] = 0.0f;
+	_hor_thrust_sp[1] = 0.0f;
 	_att_control.zero();
 
 	/* initialize thermal corrections as we might not immediately get a topic update (only non-zero values) */
@@ -368,6 +372,8 @@ MulticopterAttitudeControl::control_attitude(float dt)
 {
 	vehicle_attitude_setpoint_poll();
 	_thrust_sp = _v_att_sp.thrust;
+	_hor_thrust_sp[0] = _v_att_sp.hor_thrust[0];
+	_hor_thrust_sp[1] = _v_att_sp.hor_thrust[1];
 
 	/* prepare yaw weight from the ratio between roll/pitch and yaw gains */
 	Vector3f attitude_gain = _attitude_p;
@@ -754,8 +760,8 @@ MulticopterAttitudeControl::run()
 				_actuators.control[2] = (PX4_ISFINITE(_att_control(2))) ? _att_control(2) : 0.0f;
 				_actuators.control[3] = (PX4_ISFINITE(_thrust_sp)) ? _thrust_sp : 0.0f;
 				/* Manual horizontal thrust - temporary */
-				_actuators.control[4] = (PX4_ISFINITE(_manual_control_sp.aux1)) ? _manual_control_sp.aux1 * 0.1f : 0.0f;
-				_actuators.control[5] = (PX4_ISFINITE(_manual_control_sp.aux2)) ? _manual_control_sp.aux2 * 0.1f : 0.0f;
+				_actuators.control[4] = (PX4_ISFINITE(_hor_thrust_sp[0])) ? _hor_thrust_sp[0] : 0.0f;
+				_actuators.control[5] = (PX4_ISFINITE(_hor_thrust_sp[1])) ? _hor_thrust_sp[1] : 0.0f;
 				_actuators.control[7] = _v_att_sp.landing_gear;
 				_actuators.timestamp = hrt_absolute_time();
 				_actuators.timestamp_sample = _sensor_gyro.timestamp;
