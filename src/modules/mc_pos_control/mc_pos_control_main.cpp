@@ -310,6 +310,34 @@ private:
 	matrix::Dcmf _R_setpoint;
 
 	/**
+	 * Horizontal thrust
+	 *                           _______
+	 * regulated outputs y(t) -->|  K  |--> control inputs u(t)
+	 *                           -------
+	 * where:
+	 * 	x(t+1) = A x(t) + B y(t)
+	 * 	u(t)   = C x(t) + D y(t)
+	 */
+	static constexpr uint8_t _ctrl_num_reg_outputs{9};
+	static constexpr uint8_t _ctrl_num_control_inputs{5};
+	static constexpr uint8_t _ctrl_num_states{1};
+	float _data_A[1] {0.98188896f};
+	float _data_B[9] {-0.00634260f,0.00188910f,-0.00201285f,-0.00847428f,-0.00821703f,0.00105724f,-0.00284271f,-0.00370201f,0.00102901f};
+	float _data_C[5] {1.03187125f,0.42343063f,0.19454577f,-1.26318376f,-0.49331098f};
+	float _data_D[45] {-0.07382956f,-0.35741182f,0.10962178f,-0.07865816f,0.31378732f,-0.09062801f,-0.21856588f,-0.05666276f,-0.00757318f,0.03212172f,-0.16674714f,0.03897732f,0.33520261f,-0.26123081f,0.02858735f,-0.04566629f,-0.37005366f,0.02114512f,0.10892988f,-0.02588159f,-0.06214739f,0.15304715f,0.15888133f,-0.22914580f,0.09015092f,0.12041218f,-0.17035558f,-0.46823071f,0.12074295f,-0.14033913f,-0.56766187f,-0.66227713f,0.11294289f,-0.20343798f,-0.20599346f,0.05305622f,-0.24189498f,-0.00165127f,-0.06140144f,-0.11909000f,-0.27310084f,0.05703685f,-0.11464014f,-0.58115479f,0.05949057f};
+	float _data_op[5] {0.0689357528687958f,0.0f,-0.477172892317574f,0.0f,0.0f};
+	matrix::SquareMatrix<float, _ctrl_num_states> _ctrl_A;
+	matrix::Matrix<float, _ctrl_num_states, _ctrl_num_reg_outputs> _ctrl_B;
+	matrix::Matrix<float, _ctrl_num_control_inputs, _ctrl_num_states> _ctrl_C;
+	matrix::Matrix<float, _ctrl_num_control_inputs, _ctrl_num_reg_outputs> _ctrl_D;
+	matrix::Vector<float, _ctrl_num_control_inputs> _ctrl_op;
+	matrix::Vector<float, _ctrl_num_states> _ctrl_state;
+	matrix::Vector3f _pos_err_int;
+	matrix::Vector2f _hor_thrust;
+	bool _use_state_space;
+	uint32_t _loop_counter;
+
+	/**
 	 * Update our local parameter cache.
 	 */
 	int		parameters_update(bool force);
@@ -403,7 +431,7 @@ private:
 	void set_idle_state();
 
 	/**
-	 * Temporary method for flight control compuation
+	 * Temporary method for flight control computation
 	 */
 	void updateConstraints(Controller::Constraints &constrains);
 
@@ -420,6 +448,13 @@ private:
 	 * Main sensor collection task.
 	 */
 	void		task_main();
+
+	/**
+	 *  State space controller.
+	 */
+	void run_state_space_controller(matrix::Vector3f &thrust_sp, matrix::Vector3f &hor_thrust_sp);
+	
+	void check_controller_switch();
 };
 
 namespace pos_control
@@ -482,7 +517,14 @@ MulticopterPositionControl::MulticopterPositionControl() :
 	_takeoff_vel_limit(0.0f),
 	_z_reset_counter(0),
 	_xy_reset_counter(0),
-	_heading_reset_counter(0)
+	_heading_reset_counter(0),
+	/* Horizontal thrust */
+	_ctrl_A(_data_A),
+	_ctrl_B(_data_B),
+	_ctrl_C(_data_C),
+	_ctrl_D(_data_D),
+	_ctrl_op(_data_op),
+	_use_state_space(false)
 {
 	/* Make the attitude quaternion valid */
 	_att.q[0] = 1.0f;
@@ -507,6 +549,10 @@ MulticopterPositionControl::MulticopterPositionControl() :
 	_R_setpoint.identity();
 
 	_thrust_int.zero();
+
+	/* Horizontal thrust */
+	_hor_thrust.zero();
+	_pos_err_int.zero();
 
 	/* fetch initial parameter values */
 	parameters_update(true);
@@ -823,6 +869,7 @@ MulticopterPositionControl::reset_pos_sp()
 		// position in a special way. In position control mode the position will be reset anyway until the vehicle has reduced speed.
 		_pos_sp(0) = _pos(0);
 		_pos_sp(1) = _pos(1);
+		_pos_err_int.zero();
 	}
 }
 
@@ -2318,6 +2365,11 @@ MulticopterPositionControl::do_control()
 	_run_alt_control = true;
 
 	if (_control_mode.flag_control_manual_enabled) {
+		/* Keep the state space integrators at zero and do not use the controller no matter what 
+		 * This means we do not have to handle changing setpoints
+		 */
+		_use_state_space = false;
+
 		/* manual control */
 		control_manual();
 		_mode_auto = false;
@@ -2332,12 +2384,19 @@ MulticopterPositionControl::do_control()
 
 		_hold_offboard_xy = false;
 		_hold_offboard_z = false;
-
 	} else {
 		/* reset acceleration to default */
 		_acceleration_state_dependent_xy = _acceleration_hor_max.get();
 		_acceleration_state_dependent_z = _acceleration_z_max_up.get();
 		control_non_manual();
+	}
+
+	/* Check if we need to activate the state space controller starting next time step */
+	check_controller_switch();
+	/* Ensure there is no integral build-up */
+	if (!_use_state_space) {
+		_pos_err_int.zero();
+		_ctrl_state.zero();
 	}
 }
 
@@ -2503,15 +2562,52 @@ MulticopterPositionControl::calculate_thrust_setpoint()
 	/* velocity error */
 	matrix::Vector3f vel_err = _vel_sp - _vel;
 
-	/* thrust vector in NED frame */
+	/* output thrust vector in NED frame */
 	matrix::Vector3f thrust_sp;
+
+	/* thrust vectors for baseline controller */
+	matrix::Vector3f thrust_sp_1(0.0f, 0.0f, 0.0f);
+	matrix::Vector3f hor_thrust_sp_1(0.0f, 0.0f, 0.0f);
+
+	/* thrust vectors for second controller */
+	matrix::Vector3f thrust_sp_2(0.0f, 0.0f, 0.0f);
+	matrix::Vector3f hor_thrust_sp_2(0.0f, 0.0f, 0.0f);
 
 	if (_control_mode.flag_control_acceleration_enabled && _pos_sp_triplet.current.acceleration_valid) {
 		thrust_sp = matrix::Vector3f(_pos_sp_triplet.current.a_x, _pos_sp_triplet.current.a_y, _pos_sp_triplet.current.a_z);
 
 	} else {
-		thrust_sp = vel_err.emult(_vel_p) + _vel_err_d.emult(_vel_d)
-			    + _thrust_int - matrix::Vector3f(0.0f, 0.0f, _thr_hover.get());
+		// Original controller
+		thrust_sp_1 = vel_err.emult(_vel_p) + _vel_err_d.emult(_vel_d)
+				+ _thrust_int - matrix::Vector3f(0.0f, 0.0f, _thr_hover.get());
+		
+		// DEBUG: log original controller
+		_att_sp.thrust_vec_1[0] = thrust_sp_1(0);
+		_att_sp.thrust_vec_1[1] = thrust_sp_1(1);
+		_att_sp.thrust_vec_1[2] = thrust_sp_1(2);
+
+		// State space controller
+		run_state_space_controller(thrust_sp_2, hor_thrust_sp_2);
+
+		// DEBUG: log to attitude setpoint
+		_att_sp.thrust_vec_2[0] = thrust_sp_2(0);
+		_att_sp.thrust_vec_2[1] = thrust_sp_2(1);
+		_att_sp.thrust_vec_2[2] = thrust_sp_2(2);
+		_att_sp.hor_thrust_2[0] = hor_thrust_sp_2(0);
+		_att_sp.hor_thrust_2[1] = hor_thrust_sp_2(1);
+		
+		// Choose which thrust vector to use
+		if (_use_state_space) {
+			// Use state space controller
+			thrust_sp = thrust_sp_2;
+			_hor_thrust = matrix::Vector2f(hor_thrust_sp_2(0), hor_thrust_sp_2(1));
+			_att_sp.controller_selected = 1;
+		} else {
+			// Use original controller
+			thrust_sp = thrust_sp_1;
+			_hor_thrust = matrix::Vector2f(hor_thrust_sp_1(0), hor_thrust_sp_1(1));
+			_att_sp.controller_selected = 0;
+		}
 	}
 
 	if (!_control_mode.flag_control_velocity_enabled && !_control_mode.flag_control_acceleration_enabled) {
@@ -2975,6 +3071,7 @@ MulticopterPositionControl::task_main()
 		hrt_abstime t = hrt_absolute_time();
 		const float dt = t_prev != 0 ? (t - t_prev) / 1e6f : 0.004f;
 		t_prev = t;
+		_loop_counter++;
 
 		/* set dt for control blocks */
 		setDt(dt);
@@ -3239,8 +3336,10 @@ MulticopterPositionControl::task_main()
 				_control_mode.flag_control_acceleration_enabled))) {
 
 				/* Horizontal thrust */
-				_att_sp.hor_thrust[0] = _manual.aux1 * 0.1f;
-				_att_sp.hor_thrust[1] = _manual.aux2 * 0.1f;
+				_att_sp.hor_thrust[0] = PX4_ISFINITE(_hor_thrust(0)) ? _hor_thrust(0) : 0.0f;
+				_att_sp.hor_thrust[1] = PX4_ISFINITE(_hor_thrust(1)) ? _hor_thrust(1) : 0.0f;
+				_att_sp.loop_counter = _loop_counter;
+				_att_sp.dt = dt;
 				if (_att_sp_pub != nullptr) {
 					orb_publish(_attitude_setpoint_id, _att_sp_pub, &_att_sp);
 
@@ -3384,6 +3483,106 @@ MulticopterPositionControl::landdetection_thrust_limit(matrix::Vector3f &thrust_
 			thrust_sp.zero();
 		}
 	}
+}
+
+void
+MulticopterPositionControl::run_state_space_controller(matrix::Vector3f &thrust_sp, matrix::Vector3f &hor_thrust_sp)
+{
+	// If for any reason, we get a NaN position setpoint, we better just stay where we are.
+	if (PX4_ISFINITE(_pos_sp(0)) && PX4_ISFINITE(_pos_sp(1)) && PX4_ISFINITE(_pos_sp(2)) ) {
+		matrix::Vector3f pos_err = _pos_sp - _pos;
+
+		_pos_err_int = _pos_err_int + pos_err * _dt;
+		_att_sp.pos_int[0] = _pos_err_int(0);
+		_att_sp.pos_int[1] = _pos_err_int(1);
+		_att_sp.pos_int[2] = _pos_err_int(2);
+
+		/** Controller implemented as
+		 * x(t+1) = A x(t) + B y(t)
+		 * u(t) = C x(t) + D y(t)
+		 */	
+
+		// y(t)
+		float data[_ctrl_num_reg_outputs] = {-_pos_err_int(0),
+		                                -_pos_err_int(1),
+									    -_pos_err_int(2),
+									    -pos_err(0),
+									    -pos_err(1),
+									    -pos_err(2),
+									    _vel(0),
+									    _vel(1),
+									    _vel(2)};
+		matrix::Vector<float, _ctrl_num_reg_outputs> regulated_output(data);
+
+		// u(t)
+		matrix::Vector<float, _ctrl_num_control_inputs> control_input = _ctrl_C * _ctrl_state
+			+ _ctrl_D * regulated_output;
+		
+		// Add operating point
+		matrix::Vector<float, _ctrl_num_control_inputs> op;
+		op.zero();
+		op(2) = -_thr_hover.get();
+		control_input = control_input + _ctrl_op;
+
+		// x(t+1)
+		_ctrl_state = _ctrl_A * _ctrl_state + _ctrl_B * regulated_output;
+
+		thrust_sp(0) = control_input(0);
+		thrust_sp(1) = control_input(1);
+		thrust_sp(2) = control_input(2);
+		hor_thrust_sp(0) = control_input(3);
+		hor_thrust_sp(1) = control_input(4);
+		hor_thrust_sp(2) = 0.0f;
+
+		// Convert to body frame
+		hor_thrust_sp = _R.transpose() * hor_thrust_sp;
+		
+		// The vertical component cannot be produced using horizontal thrust, so rotate it back in
+		// the world frame and add it to thrust_sp
+		matrix::Vector3f hor_thrust_sp_z(0.0f, 0.0f, hor_thrust_sp(2));
+		matrix::Vector3f thrust_comp = _R * hor_thrust_sp_z;
+		thrust_sp = thrust_sp + thrust_comp;
+		hor_thrust_sp(2) = 0.0f;
+	} else {
+		thrust_sp.zero();
+		hor_thrust_sp.zero();
+		warn_rate_limited("Caught invalid pos_sp");
+	}
+}
+
+void
+MulticopterPositionControl::check_controller_switch()
+{
+	/* Use the landing gear switch to switch to the new controller and only use in offboard mode */
+	if ((_manual.gear_switch == manual_control_setpoint_s::SWITCH_POS_ON) &&
+		(_control_mode.flag_control_offboard_enabled) ) {
+		
+		if (_use_state_space) {
+			/* Already activated, no need to check */
+			_use_state_space = _use_state_space;
+		} else {
+			/* Check that we are close to the setpoint before switching over
+			 * This is to prevent big jumps in setpoints
+			 */
+			float norm_dist_target = (_pos - _pos_sp).length();
+			/* Check that the thrust commanded is high enough to prevent a big drop and low enough
+			 * to prevent shooting into the ceiling
+			 */
+			float thrust = matrix::Vector3f(_att_sp.thrust_vec_2[0],_att_sp.thrust_vec_2[1],_att_sp.thrust_vec_2[2]).length();
+			
+			if ( (norm_dist_target < 0.3f) &&
+				 (thrust > (0.7f*_thr_hover.get())) &&
+				 (thrust < (1.3f*_thr_hover.get())) ) {
+				_use_state_space = true;
+			} else {
+				_use_state_space = false;
+			}
+		}
+	} else {
+		/* Not in the right mode(s) */
+		_use_state_space = false;
+	}
+	
 }
 
 int
