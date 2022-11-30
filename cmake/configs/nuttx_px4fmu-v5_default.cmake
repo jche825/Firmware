@@ -7,6 +7,7 @@ set(config_module_list
 	#
 	# Board support modules
 	#
+	drivers/arduino_tacho
 	drivers/barometer
 	drivers/differential_pressure
 	drivers/distance_sensor
