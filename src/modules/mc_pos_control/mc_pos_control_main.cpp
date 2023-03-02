@@ -2979,6 +2979,13 @@ MulticopterPositionControl::generate_attitude_setpoint()
 		_att_sp.q_d_valid = true;
 	}
 
+	// JUNYI: Manual vectored thrust control
+	const float x_vect = _manual.aux1 * 0.1f;
+	const float y_vect = _manual.aux2 * 0.1f;
+	_hor_thrust = matrix::Vector2f(x_vect, y_vect);
+	_att_sp.hor_thrust[0] = PX4_ISFINITE(_hor_thrust(0)) ? _hor_thrust(0) : 0.0f;
+	_att_sp.hor_thrust[1] = PX4_ISFINITE(_hor_thrust(1)) ? _hor_thrust(1) : 0.0f;
+
 	// Only switch the landing gear up if we are not landed and if
 	// the user switched from gear down to gear up.
 	// If the user had the switch in the gear up position and took off ignore it
