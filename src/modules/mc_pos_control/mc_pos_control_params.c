@@ -603,3 +603,51 @@ PARAM_DEFINE_FLOAT(MPC_TKO_RAMP_T, 0.4f);
  * @group Multicopter Position Control
  */
 PARAM_DEFINE_INT32(MPC_FLT_TSK, 0);
+
+/**
+ * Thrust setpoint average on pitching rig
+ *
+ * @unit V
+ * @min 0.0
+ * @max 1.0
+ * @increment 0.1
+ * @decimal 2
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(MPC_PRIG_Z_AVG, 0.0f);
+
+/**
+ * Pitch setpoint average on pitching rig
+ *
+ * @unit V
+ * @min 0.0
+ * @max 1.0
+ * @increment 0.05
+ * @decimal 2
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(MPC_PRIG_P_AVG, 0.0f);
+
+/**
+ * Pitch setpoint amplitude on pitching rig
+ *
+ * @unit V
+ * @min 0.0
+ * @max 1.0
+ * @increment 0.05
+ * @decimal 2
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(MPC_PRIG_P_AMP, 0.0f);
+
+/**
+ * Horizontal vectored thrust setpoint amplitude on pitching rig
+ *
+ * @unit V
+ * @min 0.0
+ * @max 1.0
+ * @increment 0.01
+ * @decimal 2
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(MPC_PRIG_X_AMP, 0.0f);
