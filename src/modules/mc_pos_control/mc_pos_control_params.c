@@ -620,7 +620,7 @@ PARAM_DEFINE_FLOAT(MPC_PRIG_Z_AVG, 0.0f);
  * Pitch setpoint average on pitching rig
  *
  * @unit V
- * @min 0.0
+ * @min -1.0
  * @max 1.0
  * @increment 0.05
  * @decimal 2
@@ -651,3 +651,49 @@ PARAM_DEFINE_FLOAT(MPC_PRIG_P_AMP, 0.0f);
  * @group Multicopter Position Control
  */
 PARAM_DEFINE_FLOAT(MPC_PRIG_X_AMP, 0.0f);
+
+/**
+ * Frequency min for pitching rig chirp signal
+ *
+ * @unit Hz
+ * @min 0.0
+ * @max 30.0
+ * @increment 0.5
+ * @decimal 2
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(MPC_PRIG_F1, 0.1f);
+
+/**
+ * Frequency max for pitching rig chirp signal
+ *
+ * @unit Hz
+ * @min 0.0
+ * @max 30.0
+ * @increment 0.5
+ * @decimal 2
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(MPC_PRIG_F2, 1.0f);
+
+/**
+ * Time period per loop for pitching rig chirp signal
+ *
+ * @unit s
+ * @min 10.0
+ * @max 60.0
+ * @increment 1
+ * @decimal 2
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(MPC_PRIG_TMAX, 10.0f);
+
+/**
+ * Loop number for pitching rig chirp signal
+ *
+ * @min 1
+ * @max 10
+ * @increment 1
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_INT32(MPC_PRIG_LOOP, 1);

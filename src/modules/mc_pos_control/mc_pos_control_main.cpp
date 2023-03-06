@@ -137,6 +137,7 @@ private:
 	bool 		_lnd_reached_ground = false; 		/**<true if controller assumes the vehicle has reached the ground after landing */
 	bool 		_triplet_lat_lon_finite = true; 		/**<true if triplets current is non-finite */
 	bool		_terrain_follow = false;			/**<true is the position controller is controlling height above ground */
+	bool 		_pitchrig_flag = false;				/**< BY JUNYI: true if pitching rig mode is desired*/
 
 	int		_control_task;			/**< task handle for task */
 	orb_advert_t	_mavlink_log_pub;		/**< mavlink log advert */
@@ -204,6 +205,10 @@ private:
 		(ParamFloat<px4::params::MPC_PRIG_P_AVG>) _pitchrig_pitch_avg,
 		(ParamFloat<px4::params::MPC_PRIG_P_AMP>) _pitchrig_pitch_amp,
 		(ParamFloat<px4::params::MPC_PRIG_X_AMP>) _pitchrig_xvect_amp,
+		(ParamFloat<px4::params::MPC_PRIG_F1>) _pitchrig_chirp_f1,
+		(ParamFloat<px4::params::MPC_PRIG_F2>) _pitchrig_chirp_f2,
+		(ParamFloat<px4::params::MPC_PRIG_TMAX>) _pitchrig_chirp_tmax,
+		(ParamInt<px4::params::MPC_PRIG_LOOP>) _pitchrig_chirp_loops, /**< temporary flag for the transition to flight tasks */
 
 		(ParamFloat<px4::params::MPC_THR_MIN>) _thr_min,
 		(ParamFloat<px4::params::MPC_THR_MAX>) _thr_max,
@@ -279,12 +284,17 @@ private:
 	float _prig_p_avg;
 	float _prig_p_amp;
 	float _prig_x_amp;
+	float _prig_chirp_f1;
+	float _prig_chirp_f2;
+	float _prig_chirp_tmax;
+	int32_t _prig_chirp_loops;
 
 	struct map_projection_reference_s _ref_pos;
 	float _ref_alt;
 	bool _ref_alt_is_global; /** true when the reference altitude is defined in a global reference frame */
 	hrt_abstime _ref_timestamp;
 	hrt_abstime _last_warn;
+	hrt_abstime _pitchrig_starttime; /**< tracks start time of pitching rig mode*/
 
 	matrix::Vector3f _thrust_int;
 	matrix::Vector3f _pos;
@@ -518,6 +528,7 @@ MulticopterPositionControl::MulticopterPositionControl() :
 	_ref_alt_is_global(false),
 	_ref_timestamp(0),
 	_last_warn(0),
+	_pitchrig_starttime(0),		// BY JUNYI:
 	_yaw(0.0f),
 	_yaw_takeoff(0.0f),
 	_man_yaw_offset(0.0f),
@@ -648,6 +659,10 @@ MulticopterPositionControl::parameters_update(bool force)
 		_prig_p_avg = _pitchrig_pitch_avg.get();
 		_prig_p_amp = _pitchrig_pitch_amp.get();
 		_prig_x_amp = _pitchrig_xvect_amp.get();
+		_prig_chirp_f1 = _pitchrig_chirp_f1.get();
+		_prig_chirp_f2 = _pitchrig_chirp_f2.get();
+		_prig_chirp_tmax = _pitchrig_chirp_tmax.get();
+		_prig_chirp_loops = _pitchrig_chirp_loops.get();
 
 		_thr_hover.set(math::constrain(_thr_hover.get(), _thr_min.get(), _thr_max.get()));
 
@@ -3003,8 +3018,8 @@ MulticopterPositionControl::generate_attitude_setpoint()
 	const float x_vect = _manual.aux1 * 0.1f;
 	const float y_vect = _manual.aux2 * 0.1f;
 	_hor_thrust = matrix::Vector2f(x_vect, y_vect);
-	_att_sp.hor_thrust[0] = PX4_ISFINITE(_hor_thrust(0)) ? _hor_thrust(0) : 0.0f;
-	_att_sp.hor_thrust[1] = PX4_ISFINITE(_hor_thrust(1)) ? _hor_thrust(1) : 0.0f;
+	_att_sp.hor_thrust[0] = _hor_thrust(0);
+	_att_sp.hor_thrust[1] = _hor_thrust(1);
 
 	// Only switch the landing gear up if we are not landed and if
 	// the user switched from gear down to gear up.
@@ -3027,136 +3042,93 @@ MulticopterPositionControl::generate_attitude_setpoint()
 void
 MulticopterPositionControl::generate_attitude_setpoint_bypass()
 {
-	/* control throttle directly if no climb rate controller is active */
-	if (!_control_mode.flag_control_climb_rate_enabled) {
-		float thr_val = throttle_curve(_prig_z_avg, _thr_hover.get());
-		_att_sp.thrust = math::min(thr_val, _manual_thr_max.get());
+	hrt_abstime time_now = hrt_absolute_time();
+	const float chirp_loop = floor((time_now - _pitchrig_starttime) / (_prig_chirp_tmax * 1e6f));
+	const float pitchrig_runtime = (((time_now - _pitchrig_starttime) / 1e6f) <= _prig_chirp_tmax * _prig_chirp_loops) ? (time_now - _pitchrig_starttime) / 1e6f - chirp_loop * _prig_chirp_tmax : 0.000f;
+	const float chirp_sig = sinf(2.0f * M_PI_F * pitchrig_runtime * (_prig_chirp_f1 + (_prig_chirp_f2 - _prig_chirp_f1) * 0.5f * pitchrig_runtime / _prig_chirp_tmax));
 
-		/* enforce minimum throttle if not landed */
-		if (!_vehicle_land_detected.landed) {
-			_att_sp.thrust = math::max(_att_sp.thrust, _manual_thr_min.get());
-		}
+	// desired body yaw set to current yaw to prevent yaw motion
+	_att_sp.yaw_body = _yaw;
+
+	// JUNYI TODO: DESCRIBE _THRUST_SP VECTOR USING PARAMS
+	matrix::Vector3f thrust_sp_pr(0.0f, 0.0f, 0.0f);
+	thrust_sp_pr(0) = _prig_p_avg + _prig_p_amp * chirp_sig;
+	thrust_sp_pr(2) = -_prig_z_avg;
+
+	_att_sp.thrust_vec_pr[0] = thrust_sp_pr(0);
+	_att_sp.thrust_vec_pr[1] = thrust_sp_pr(1);
+	_att_sp.thrust_vec_pr[2] = thrust_sp_pr(2);
+
+	// calculate body thrust
+	matrix::Vector3f R_z(_R(0, 2), _R(1, 2), _R(2, 2));
+	float thrust_body_z = thrust_sp_pr.dot(-R_z);
+	_att_sp.thrust = math::min(thrust_body_z, _manual_thr_max.get());
+
+	/* enforce minimum throttle if not landed */
+	if (!_vehicle_land_detected.landed) {
+		_att_sp.thrust = math::max(_att_sp.thrust, _manual_thr_min.get());
 	}
 
-	/* control roll and pitch directly if no aiding velocity controller is active */
-	if (!_control_mode.flag_control_velocity_enabled) {
+	/* calculate attitude setpoint from thrust vector */
+	/* desired body_z axis = -normalize(thrust_vector) */
+	matrix::Vector3f body_x;
+	matrix::Vector3f body_y;
+	matrix::Vector3f body_z;
 
-		/*
-		 * Input mapping for roll & pitch setpoints
-		 * ----------------------------------------
-		 * This simplest thing to do is map the y & x inputs directly to roll and pitch, and scale according to the max
-		 * tilt angle.
-		 * But this has several issues:
-		 * - The maximum tilt angle cannot easily be restricted. By limiting the roll and pitch separately,
-		 *   it would be possible to get to a higher tilt angle by combining roll and pitch (the difference is
-		 *   around 15 degrees maximum, so quite noticeable). Limiting this angle is not simple in roll-pitch-space,
-		 *   it requires to limit the tilt angle = acos(cos(roll) * cos(pitch)) in a meaningful way (eg. scaling both
-		 *   roll and pitch).
-		 * - Moving the stick diagonally, such that |x| = |y|, does not move the vehicle towards a 45 degrees angle.
-		 *   The direction angle towards the max tilt in the XY-plane is atan(1/cos(x)). Which means it even depends
-		 *   on the tilt angle (for a tilt angle of 35 degrees, it's off by about 5 degrees).
-		 *
-		 * So instead we control the following 2 angles:
-		 * - tilt angle, given by sqrt(x*x + y*y)
-		 * - the direction of the maximum tilt in the XY-plane, which also defines the direction of the motion
-		 *
-		 * This allows a simple limitation of the tilt angle, the vehicle flies towards the direction that the stick
-		 * points to, and changes of the stick input are linear.
-		 */
-		const float x = _prig_p_avg * _man_tilt_max;
-		const float y = 0.0f * _man_tilt_max;
+	if (thrust_sp_pr.length() > SIGMA_NORM) {
+		body_z = -thrust_sp_pr.normalized();
 
-		// we want to fly towards the direction of (x, y), so we use a perpendicular axis angle vector in the XY-plane
-		matrix::Vector2f v = matrix::Vector2f(y, -x);
-		float v_norm = v.norm(); // the norm of v defines the tilt angle
-
-		if (v_norm > _man_tilt_max) { // limit to the configured maximum tilt angle
-			v *= _man_tilt_max / v_norm;
-		}
-
-		matrix::Quatf q_sp_rpy = matrix::AxisAnglef(v(0), v(1), 0.f);
-		// The axis angle can change the yaw as well (but only at higher tilt angles. Note: we're talking
-		// about the world frame here, in terms of body frame the yaw rate will be unaffected).
-		// This the the formula by how much the yaw changes:
-		//   let a := tilt angle, b := atan(y/x) (direction of maximum tilt)
-		//   yaw = atan(-2 * sin(b) * cos(b) * sin^2(a/2) / (1 - 2 * cos^2(b) * sin^2(a/2))).
-		matrix::Eulerf euler_sp = q_sp_rpy;
-		// Since the yaw setpoint is integrated, we extract the offset here,
-		// so that we can remove it before the next iteration
-		_man_yaw_offset = euler_sp(2);
-
-		// update the setpoints
-		_att_sp.roll_body = euler_sp(0);
-		_att_sp.pitch_body = euler_sp(1);
-		_att_sp.yaw_body += euler_sp(2);
-
-		/* only if we're a VTOL modify roll/pitch */
-		if (_vehicle_status.is_vtol) {
-			// construct attitude setpoint rotation matrix. modify the setpoints for roll
-			// and pitch such that they reflect the user's intention even if a yaw error
-			// (yaw_sp - yaw) is present. In the presence of a yaw error constructing a rotation matrix
-			// from the pure euler angle setpoints will lead to unexpected attitude behaviour from
-			// the user's view as the euler angle sequence uses the  yaw setpoint and not the current
-			// heading of the vehicle.
-			// The effect of that can be seen with:
-			// - roll/pitch into one direction, keep it fixed (at high angle)
-			// - apply a fast yaw rotation
-			// - look at the roll and pitch angles: they should stay pretty much the same as when not yawing
-
-			// calculate our current yaw error
-			float yaw_error = wrap_pi(_att_sp.yaw_body - _yaw);
-
-			// compute the vector obtained by rotating a z unit vector by the rotation
-			// given by the roll and pitch commands of the user
-			matrix::Vector3f zB = {0.0f, 0.0f, 1.0f};
-			matrix::Dcmf R_sp_roll_pitch = matrix::Eulerf(_att_sp.roll_body, _att_sp.pitch_body, 0.0f);
-			matrix::Vector3f z_roll_pitch_sp = R_sp_roll_pitch * zB;
-
-			// transform the vector into a new frame which is rotated around the z axis
-			// by the current yaw error. this vector defines the desired tilt when we look
-			// into the direction of the desired heading
-			matrix::Dcmf R_yaw_correction = matrix::Eulerf(0.0f, 0.0f, -yaw_error);
-			z_roll_pitch_sp = R_yaw_correction * z_roll_pitch_sp;
-
-			// use the formula z_roll_pitch_sp = R_tilt * [0;0;1]
-			// R_tilt is computed from_euler; only true if cos(roll) not equal zero
-			// -> valid if roll is not +-pi/2;
-			_att_sp.roll_body = -asinf(z_roll_pitch_sp(1));
-			_att_sp.pitch_body = atan2f(z_roll_pitch_sp(0), z_roll_pitch_sp(2));
-		}
-
-		// Reset yaw and roll setpoints to current attitudes to disable control
-		_att_sp.yaw_body = _yaw;
-		_att_sp.roll_body = matrix::Eulerf(_R).phi();;
-
-		/* copy quaternion setpoint to attitude setpoint topic */
-		matrix::Quatf q_sp = matrix::Eulerf(_att_sp.roll_body, _att_sp.pitch_body, _att_sp.yaw_body);
-		q_sp.copyTo(_att_sp.q_d);
-		_att_sp.q_d_valid = true;
+	} else {
+		/* no thrust, set Z axis to safe value */
+		body_z = {0.0f, 0.0f, 1.0f};
 	}
+
+	/* desired body_y axis set to 0 to prevent any y axis thrust */
+	body_y.zero();
+	body_y(1) = 1.0f;
+
+	if (fabsf(body_z(2)) > SIGMA_SINGLE_OP) {
+		/* desired body_x axis */
+		body_x = body_y % body_z;
+		body_x.normalize();
+	} else {
+		body_x.zero();
+		body_x(2) = 1.0f;
+	}
+
+	/* fill rotation matrix */
+	for (int i = 0; i < 3; i++) {
+		_R_setpoint(i, 0) = body_x(i);
+		_R_setpoint(i, 1) = body_y(i);
+		_R_setpoint(i, 2) = body_z(i);
+	}
+
+	/* copy quaternion setpoint to attitude setpoint topic */
+	matrix::Quatf q_sp = _R_setpoint;
+	q_sp.copyTo(_att_sp.q_d);
+	_att_sp.q_d_valid = true;
+
+	/* calculate euler angles, for logging only, must not be used for control */
+	matrix::Eulerf euler = _R_setpoint;
+	_att_sp.roll_body = euler(0);
+	_att_sp.pitch_body = euler(1);
+	/* yaw already used to construct rot matrix, but actual rotation matrix can have different yaw near singularity */
 
 	// Manual vectored thrust control, disable y axis
-	const float x_vect = _manual.aux1 * 0.1f;
+	const float x_vect = _prig_x_amp * chirp_sig;
 	const float y_vect = 0.0f;
 	_hor_thrust = matrix::Vector2f(x_vect, y_vect);
-	_att_sp.hor_thrust[0] = PX4_ISFINITE(_hor_thrust(0)) ? _hor_thrust(0) : 0.0f;
-	_att_sp.hor_thrust[1] = PX4_ISFINITE(_hor_thrust(1)) ? _hor_thrust(1) : 0.0f;
+	_att_sp.hor_thrust_pr[0] = _hor_thrust(0);
+	_att_sp.hor_thrust_pr[1] = _hor_thrust(1);
+	_att_sp.hor_thrust[0] = _hor_thrust(0);
+	_att_sp.hor_thrust[1] = _hor_thrust(1);
 
-	// Only switch the landing gear up if we are not landed and if
-	// the user switched from gear down to gear up.
-	// If the user had the switch in the gear up position and took off ignore it
-	// until he toggles the switch to avoid retracting the gear immediately on takeoff.
-	if (_manual.gear_switch == manual_control_setpoint_s::SWITCH_POS_ON && _gear_state_initialized &&
-	    !_vehicle_land_detected.landed) {
-		_att_sp.landing_gear = vehicle_attitude_setpoint_s::LANDING_GEAR_UP;
+	/* save thrust setpoint for logging */
+	_local_pos_sp.acc_x = thrust_sp_pr(0) * CONSTANTS_ONE_G;
+	_local_pos_sp.acc_y = thrust_sp_pr(1) * CONSTANTS_ONE_G;
+	_local_pos_sp.acc_z = thrust_sp_pr(2) * CONSTANTS_ONE_G;
 
-	} else if (_manual.gear_switch == manual_control_setpoint_s::SWITCH_POS_OFF) {
-		_att_sp.landing_gear = vehicle_attitude_setpoint_s::LANDING_GEAR_DOWN;
-		// Switching the gear off does put it into a safe defined state
-		_gear_state_initialized = true;
-	}
-
-	_att_sp.timestamp = hrt_absolute_time();
+	_att_sp.timestamp = time_now;
 }
 
 bool MulticopterPositionControl::manual_wants_takeoff()
@@ -3214,7 +3186,8 @@ MulticopterPositionControl::task_main()
 
 	while (!_task_should_exit) {
 		/* wait for up to 20ms for data */
-		int pret = px4_poll(&fds[0], (sizeof(fds) / sizeof(fds[0])), 20);
+		// BY JUNYI: Changed wait time to 4ms
+		int pret = px4_poll(&fds[0], (sizeof(fds) / sizeof(fds[0])), 4);
 
 		/* timed out - periodic check for _task_should_exit */
 		if (pret == 0) {
@@ -3273,6 +3246,7 @@ MulticopterPositionControl::task_main()
 			_hold_offboard_z = false;
 			_in_landing = false;
 			_lnd_reached_ground = false;
+			_pitchrig_flag = false;
 
 			/* also reset previous setpoints */
 			_yaw_takeoff = _yaw;
@@ -3478,8 +3452,17 @@ MulticopterPositionControl::task_main()
 
 				// JUNYI: Change to pitching rig mode if landing gear switch is on
 				if (_manual.gear_switch == manual_control_setpoint_s::SWITCH_POS_ON) {
+					if (!_pitchrig_flag) {
+						_pitchrig_starttime = hrt_absolute_time();
+						_pitchrig_flag = true;
+					}
+					_att_sp.pitchrig_selected = 1;
 					generate_attitude_setpoint_bypass();
 				} else {
+					if (_pitchrig_flag) {
+						_pitchrig_flag = false;
+					}
+					_att_sp.pitchrig_selected = 0;
 					generate_attitude_setpoint();
 				}
 

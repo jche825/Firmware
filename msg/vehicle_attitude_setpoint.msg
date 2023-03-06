@@ -14,9 +14,12 @@ bool q_d_valid					# Set to true if quaternion vector is valid
 float32 thrust					# Output thrust in Newton the power system should generate
 float32[3] thrust_vec_1         # Attitude thrust from baseline controller
 float32[3] thrust_vec_2         # Attitude thrust from secondary controller
+float32[3] thrust_vec_pr        # Attitude thrust from pitching rig mode
 float32[2] hor_thrust           # Output x/y horizontal thrust commands
 float32[2] hor_thrust_2         # x/y horizontal thrust from secondary controller 
+float32[2] hor_thrust_pr        # x/y horizontal thrust from pitching rig mode
 int8 controller_selected        # Controller selected (0: baseline, 1: secondary)
+int8 pitchrig_selected          # Pitching rig mode selected (0: normal, 1: pitching rig)
 float32[3] pos_int              # position integral
 
 bool roll_reset_integral			# Reset roll integral part (navigation logic change)
