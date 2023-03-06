@@ -766,6 +766,12 @@ MulticopterAttitudeControl::run()
 				_actuators.timestamp = hrt_absolute_time();
 				_actuators.timestamp_sample = _sensor_gyro.timestamp;
 
+				// BY JUNYI: Stop roll and yaw signals from being sent to mixer in pitching rig mode
+				if (_v_att_sp.pitchrig_selected == 1) {
+					_actuators.control[0] = 0.0f;
+					_actuators.control[2] = 0.0f;
+				}
+
 				/* scale effort by battery status */
 				if (_bat_scale_en.get() && _battery_status.scale > 0.0f) {
 					for (int i = 0; i < 4; i++) {

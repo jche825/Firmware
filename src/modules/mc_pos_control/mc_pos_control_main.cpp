@@ -208,6 +208,7 @@ private:
 		(ParamFloat<px4::params::MPC_PRIG_F1>) _pitchrig_chirp_f1,
 		(ParamFloat<px4::params::MPC_PRIG_F2>) _pitchrig_chirp_f2,
 		(ParamFloat<px4::params::MPC_PRIG_TMAX>) _pitchrig_chirp_tmax,
+		(ParamFloat<px4::params::MPC_PRIG_TDEL>) _pitchrig_chirp_tdel,
 		(ParamInt<px4::params::MPC_PRIG_LOOP>) _pitchrig_chirp_loops, /**< temporary flag for the transition to flight tasks */
 
 		(ParamFloat<px4::params::MPC_THR_MIN>) _thr_min,
@@ -287,6 +288,7 @@ private:
 	float _prig_chirp_f1;
 	float _prig_chirp_f2;
 	float _prig_chirp_tmax;
+	float _prig_chirp_tdel;
 	int32_t _prig_chirp_loops;
 
 	struct map_projection_reference_s _ref_pos;
@@ -662,6 +664,7 @@ MulticopterPositionControl::parameters_update(bool force)
 		_prig_chirp_f1 = _pitchrig_chirp_f1.get();
 		_prig_chirp_f2 = _pitchrig_chirp_f2.get();
 		_prig_chirp_tmax = _pitchrig_chirp_tmax.get();
+		_prig_chirp_tdel = _pitchrig_chirp_tdel.get();
 		_prig_chirp_loops = _pitchrig_chirp_loops.get();
 
 		_thr_hover.set(math::constrain(_thr_hover.get(), _thr_min.get(), _thr_max.get()));
@@ -3044,13 +3047,13 @@ MulticopterPositionControl::generate_attitude_setpoint_bypass()
 {
 	hrt_abstime time_now = hrt_absolute_time();
 	const float chirp_loop = floor((time_now - _pitchrig_starttime) / (_prig_chirp_tmax * 1e6f));
-	const float pitchrig_runtime = (((time_now - _pitchrig_starttime) / 1e6f) <= _prig_chirp_tmax * _prig_chirp_loops) ? (time_now - _pitchrig_starttime) / 1e6f - chirp_loop * _prig_chirp_tmax : 0.000f;
+	const float pitchrig_runtime = (((time_now - _pitchrig_starttime) / 1e6f) <= _prig_chirp_tmax * _prig_chirp_loops) ? math::max((time_now - _pitchrig_starttime) / 1e6f - chirp_loop * _prig_chirp_tmax - _prig_chirp_tdel, 0.0f) : 0.000f;
 	const float chirp_sig = sinf(2.0f * M_PI_F * pitchrig_runtime * (_prig_chirp_f1 + (_prig_chirp_f2 - _prig_chirp_f1) * 0.5f * pitchrig_runtime / _prig_chirp_tmax));
 
 	// desired body yaw set to current yaw to prevent yaw motion
 	_att_sp.yaw_body = _yaw;
 
-	// JUNYI TODO: DESCRIBE _THRUST_SP VECTOR USING PARAMS
+	// Describe body thrust vector using parameters
 	matrix::Vector3f thrust_sp_pr(0.0f, 0.0f, 0.0f);
 	thrust_sp_pr(0) = _prig_p_avg + _prig_p_amp * chirp_sig;
 	thrust_sp_pr(2) = -_prig_z_avg;

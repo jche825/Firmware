@@ -629,7 +629,7 @@ PARAM_DEFINE_FLOAT(MPC_PRIG_Z_AVG, 0.0f);
 PARAM_DEFINE_FLOAT(MPC_PRIG_P_AVG, 0.0f);
 
 /**
- * Pitch setpoint amplitude on pitching rig
+ * Pitched thrust setpoint amplitude on pitching rig
  *
  * @unit V
  * @min 0.0
@@ -687,6 +687,18 @@ PARAM_DEFINE_FLOAT(MPC_PRIG_F2, 1.0f);
  * @group Multicopter Position Control
  */
 PARAM_DEFINE_FLOAT(MPC_PRIG_TMAX, 10.0f);
+
+/**
+ * Time delay before pitching rig chirp signal begins
+ *
+ * @unit s
+ * @min 0.0
+ * @max 10.0
+ * @increment 1
+ * @decimal 2
+ * @group Multicopter Position Control
+ */
+PARAM_DEFINE_FLOAT(MPC_PRIG_TDEL, 0.0f);
 
 /**
  * Loop number for pitching rig chirp signal
