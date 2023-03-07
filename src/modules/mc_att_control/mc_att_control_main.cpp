@@ -755,9 +755,10 @@ MulticopterAttitudeControl::run()
 				control_attitude_rates(dt);
 
 				/* publish actuator controls */
-				_actuators.control[0] = (PX4_ISFINITE(_att_control(0))) ? _att_control(0) : 0.0f;
+				// BY JUNYI: Stop roll and yaw signals from being sent to mixer
+				_actuators.control[0] = 0.0f;
 				_actuators.control[1] = (PX4_ISFINITE(_att_control(1))) ? _att_control(1) : 0.0f;
-				_actuators.control[2] = (PX4_ISFINITE(_att_control(2))) ? _att_control(2) : 0.0f;
+				_actuators.control[2] = 0.0f;
 				_actuators.control[3] = (PX4_ISFINITE(_thrust_sp)) ? _thrust_sp : 0.0f;
 				/* Manual horizontal thrust - temporary */
 				_actuators.control[4] = (PX4_ISFINITE(_hor_thrust_sp[0])) ? _hor_thrust_sp[0] : 0.0f;
@@ -765,12 +766,6 @@ MulticopterAttitudeControl::run()
 				_actuators.control[7] = _v_att_sp.landing_gear;
 				_actuators.timestamp = hrt_absolute_time();
 				_actuators.timestamp_sample = _sensor_gyro.timestamp;
-
-				// BY JUNYI: Stop roll and yaw signals from being sent to mixer in pitching rig mode
-				if (_v_att_sp.pitchrig_selected == 1) {
-					_actuators.control[0] = 0.0f;
-					_actuators.control[2] = 0.0f;
-				}
 
 				/* scale effort by battery status */
 				if (_bat_scale_en.get() && _battery_status.scale > 0.0f) {

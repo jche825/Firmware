@@ -3046,9 +3046,10 @@ void
 MulticopterPositionControl::generate_attitude_setpoint_bypass()
 {
 	hrt_abstime time_now = hrt_absolute_time();
-	const float chirp_loop = floor((time_now - _pitchrig_starttime) / (_prig_chirp_tmax * 1e6f));
-	const float pitchrig_runtime = (((time_now - _pitchrig_starttime) / 1e6f) <= _prig_chirp_tmax * _prig_chirp_loops) ? math::max((time_now - _pitchrig_starttime) / 1e6f - chirp_loop * _prig_chirp_tmax - _prig_chirp_tdel, 0.0f) : 0.000f;
-	const float chirp_sig = sinf(2.0f * M_PI_F * pitchrig_runtime * (_prig_chirp_f1 + (_prig_chirp_f2 - _prig_chirp_f1) * 0.5f * pitchrig_runtime / _prig_chirp_tmax));
+	const float time_adj = math::max((time_now - _pitchrig_starttime) / 1e6f - _prig_chirp_tdel, 0.0f);
+	const float chirp_loop = floor(time_adj / _prig_chirp_tmax);
+	const float chirp_time = time_adj <= _prig_chirp_tmax * _prig_chirp_loops ? time_adj - chirp_loop * _prig_chirp_tmax : 0.0f;
+	const float chirp_sig = sinf(2.0f * M_PI_F * chirp_time * (_prig_chirp_f1 + (_prig_chirp_f2 - _prig_chirp_f1) * 0.5f * chirp_time / _prig_chirp_tmax));
 
 	// desired body yaw set to current yaw to prevent yaw motion
 	_att_sp.yaw_body = _yaw;
